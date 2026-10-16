@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: bronze
+    database: "{{ env_var('GCP_PROJECT') }}"
+    schema: bronze
+    description: Append-only raw copies of the generator files, loaded by the ingest_to_bronze DAG.
+    tables:
+      - name: raw_traffic
+      - name: raw_events
+      - name: raw_conversions

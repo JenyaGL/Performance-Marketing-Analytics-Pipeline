@@ -1,0 +1,88 @@
+version: 2
+
+models:
+  - name: stg_ad_traffic
+    description: One row per traffic_id (paid click), deduplicated from bronze.raw_traffic keeping the latest ingestion.
+    columns:
+      - name: traffic_id
+        tests: [unique, not_null]
+      - name: partner_id
+        tests:
+          - not_null
+          - accepted_values:
+              values: [google_ads, meta_ads, tiktok_ads, affiliate_network]
+      - name: campaign_id
+        tests: [not_null]
+      - name: traffic_source
+        tests:
+          - not_null
+          - accepted_values:
+              values: [search, social, display]
+      - name: clicks
+        tests: [not_null]
+      - name: cost_usd
+        tests: [not_null]
+      - name: traffic_ts
+        tests: [not_null]
+
+  - name: stg_funnel_events
+    description: One row per event_id, deduplicated from bronze.raw_events keeping the latest ingestion.
+    columns:
+      - name: event_id
+        tests: [unique, not_null]
+      - name: session_id
+        tests: [not_null]
+      - name: traffic_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_ad_traffic')
+              field: traffic_id
+      - name: step_name
+        tests:
+          - not_null
+          - accepted_values:
+              values: [landing_view, form_start, form_submit]
+      - name: step_number
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3]
+              quote: false
+      - name: variant_id
+        tests:
+          - not_null
+          - accepted_values:
+              values: [control, treatment_v2]
+      - name: event_ts
+        tests: [not_null]
+
+  - name: stg_conversions
+    description: >
+      One row per conversion_id, deduplicated from bronze.raw_conversions keeping the latest ingestion.
+      Late-arriving conversions are kept and flagged with is_late_arriving.
+    columns:
+      - name: conversion_id
+        tests: [unique, not_null]
+      - name: session_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_funnel_events')
+              field: session_id
+      - name: lead_status
+        tests:
+          - not_null
+          - accepted_values:
+              values: [accepted, rejected, qualified]
+      - name: buyer_id
+        tests:
+          - not_null
+          - accepted_values:
+              values: [buyer_A, buyer_B, buyer_C]
+      - name: revenue_usd
+        tests: [not_null]
+      - name: conversion_ts
+        tests: [not_null]
+      - name: is_late_arriving
+        tests: [not_null]

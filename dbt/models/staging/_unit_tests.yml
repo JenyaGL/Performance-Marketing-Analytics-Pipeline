@@ -1,0 +1,42 @@
+unit_tests:
+  - name: test_stg_funnel_events_dedups_exact_and_cross_batch_duplicates
+    description: >
+      Exact duplicates (Airflow retry) collapse to one row, and when the same event_id appears in
+      two batches the most recently ingested version wins.
+    model: stg_funnel_events
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: source('bronze', 'raw_events')
+        rows:
+          - {event_id: evt_1, session_id: sess_1, traffic_id: trf_1, step_name: landing_view, step_number: 1, variant_id: control, timestamp: "2026-10-09T10:00:00.123456Z", _ingested_at: "2026-10-10 00:00:00", _batch_id: b1}
+          - {event_id: evt_1, session_id: sess_1, traffic_id: trf_1, step_name: landing_view, step_number: 1, variant_id: control, timestamp: "2026-10-09T10:00:00.123456Z", _ingested_at: "2026-10-10 00:00:00", _batch_id: b1}
+          - {event_id: evt_2, session_id: sess_1, traffic_id: trf_1, step_name: form_start, step_number: 2, variant_id: control, timestamp: "2026-10-09T10:00:30.000000Z", _ingested_at: "2026-10-10 00:00:00", _batch_id: b1}
+          - {event_id: evt_2, session_id: sess_1, traffic_id: trf_1, step_name: form_submit, step_number: 3, variant_id: control, timestamp: "2026-10-09T10:01:30.000000Z", _ingested_at: "2026-10-11 00:00:00", _batch_id: b2}
+    expect:
+      rows:
+        - {event_id: evt_1, step_name: landing_view, event_ts: "2026-10-09 10:00:00.123456", event_date: "2026-10-09", _batch_id: b1}
+        - {event_id: evt_2, step_name: form_submit, event_ts: "2026-10-09 10:01:30", event_date: "2026-10-09", _batch_id: b2}
+
+  - name: test_stg_conversions_incremental_keeps_only_new_batches_and_flags_late_arrivals
+    description: >
+      In incremental mode only rows ingested after the target's max _ingested_at are processed.
+      A conversion timestamped after its ingestion time (late-arriving) is kept, flagged is_late_arriving.
+    model: stg_conversions
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        rows:
+          - {conversion_id: cnv_old, _ingested_at: "2026-10-11 00:00:00"}
+      - input: source('bronze', 'raw_conversions')
+        rows:
+          - {conversion_id: cnv_old, session_id: sess_1, lead_status: accepted, buyer_id: buyer_A, revenue_usd: 40.0, partner_payout_usd: 8.0, timestamp: "2026-10-09T10:00:00.000000Z", _ingested_at: "2026-10-10 00:00:00", _batch_id: b1}
+          - {conversion_id: cnv_new, session_id: sess_2, lead_status: rejected, buyer_id: buyer_B, revenue_usd: 0.0, partner_payout_usd: 6.0, timestamp: "2026-10-11T09:00:00.000000Z", _ingested_at: "2026-10-12 00:00:00", _batch_id: b3}
+          - {conversion_id: cnv_late, session_id: sess_3, lead_status: accepted, buyer_id: buyer_C, revenue_usd: 70.0, partner_payout_usd: 12.0, timestamp: "2026-10-13T08:00:00.000000Z", _ingested_at: "2026-10-12 00:00:00", _batch_id: b3}
+    expect:
+      rows:
+        - {conversion_id: cnv_new, conversion_date: "2026-10-11", is_late_arriving: false}
+        - {conversion_id: cnv_late, conversion_date: "2026-10-13", is_late_arriving: true}

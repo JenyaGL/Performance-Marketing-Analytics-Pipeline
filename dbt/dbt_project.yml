@@ -1,0 +1,24 @@
+name: performance_pipeline
+version: "1.0.0"
+config-version: 2
+profile: performance_pipeline
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: target
+clean-targets: [target, dbt_packages]
+
+vars:
+  ab_control_variant: control
+  ab_treatment_variant: treatment_v2
+  ab_z_critical: 1.96  # two-sided, alpha = 0.05
+
+models:
+  performance_pipeline:
+    staging:
+      +schema: silver
+      +materialized: incremental
+    marts:
+      +schema: gold
+      +materialized: table
