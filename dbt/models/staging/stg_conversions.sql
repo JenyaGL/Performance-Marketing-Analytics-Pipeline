@@ -25,6 +25,28 @@ parsed as (
         _ingested_at,
         _batch_id
     from src
+),
+
+deduped as (
+    select *
+    from parsed
+    qualify row_number() over (partition by conversion_id order by _ingested_at desc, _batch_id desc) = 1
+),
+
+-- One row per session, so the join below cannot fan out.
+submits as (
+    select session_id, min(event_ts) as submitted_at
+    from {{ ref('stg_funnel_events') }}
+    where step_name = 'form_submit'
+    group by session_id
+),
+
+with_lag as (
+    select
+        d.*,
+        timestamp_diff(d.conversion_ts, s.submitted_at, second) as conversion_lag_seconds
+    from deduped as d
+    left join submits as s using (session_id)
 )
 
 select
@@ -36,9 +58,10 @@ select
     partner_payout_usd,
     conversion_ts,
     date(conversion_ts) as conversion_date,
-    -- Late-arriving conversions can carry a timestamp after the moment we ingested them; keep and flag them.
-    conversion_ts > _ingested_at as is_late_arriving,
+    -- Seconds from the session's form_submit to the conversion; NULL when no submit event was found.
+    conversion_lag_seconds,
+    -- Late = the buyer's conversion record lagged the form submit by more than the threshold.
+    coalesce(conversion_lag_seconds > {{ var('late_arrival_threshold_minutes') }} * 60, false) as is_late_arriving,
     _ingested_at,
     _batch_id
-from parsed
-qualify row_number() over (partition by conversion_id order by _ingested_at desc, _batch_id desc) = 1
+from with_lag

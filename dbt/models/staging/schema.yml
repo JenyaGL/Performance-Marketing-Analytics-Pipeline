@@ -60,7 +60,8 @@ models:
   - name: stg_conversions
     description: >
       One row per conversion_id, deduplicated from bronze.raw_conversions keeping the latest ingestion.
-      Late-arriving conversions are kept and flagged with is_late_arriving.
+      Late-arriving conversions are kept and flagged with is_late_arriving: the conversion lagged its
+      session's form_submit by more than var late_arrival_threshold_minutes.
     columns:
       - name: conversion_id
         tests: [unique, not_null]
@@ -84,5 +85,7 @@ models:
         tests: [not_null]
       - name: conversion_ts
         tests: [not_null]
+      - name: conversion_lag_seconds
+        description: Seconds from the session's form_submit to the conversion. NULL when the session has no form_submit event.
       - name: is_late_arriving
         tests: [not_null]
