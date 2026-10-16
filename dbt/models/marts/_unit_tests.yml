@@ -1,0 +1,86 @@
+unit_tests:
+  - name: test_funnel_daily_zero_denominators_return_null_not_error
+    description: >
+      A day with clicks but no leads gives cpl = NULL; a day with 0 clicks gives epc and ctr_to_lead = NULL.
+      A normal day still computes correctly.
+    model: mart_performance_funnel_daily
+    given:
+      - input: ref('stg_ad_traffic')
+        rows:
+          - {traffic_id: trf_1, traffic_date: "2026-10-10", partner_id: google_ads, campaign_id: cmp_search_0, traffic_source: search, clicks: 1, cost_usd: 2.5}
+          - {traffic_id: trf_2, traffic_date: "2026-10-11", partner_id: meta_ads, campaign_id: cmp_search_1, traffic_source: social, clicks: 0, cost_usd: 1.0}
+          - {traffic_id: trf_3, traffic_date: "2026-10-12", partner_id: google_ads, campaign_id: cmp_search_0, traffic_source: search, clicks: 1, cost_usd: 3.0}
+      - input: ref('stg_funnel_events')
+        rows:
+          - {event_id: e1, session_id: sess_1, traffic_id: trf_1, step_name: landing_view}
+          - {event_id: e2, session_id: sess_1, traffic_id: trf_1, step_name: form_start}
+          - {event_id: e3, session_id: sess_3, traffic_id: trf_3, step_name: landing_view}
+          - {event_id: e4, session_id: sess_3, traffic_id: trf_3, step_name: form_start}
+          - {event_id: e5, session_id: sess_3, traffic_id: trf_3, step_name: form_submit}
+      - input: ref('stg_conversions')
+        rows:
+          - {conversion_id: c3, session_id: sess_3, lead_status: accepted, revenue_usd: 50.0, partner_payout_usd: 10.0}
+    expect:
+      rows:
+        - {report_date: "2026-10-10", partner_id: google_ads, spend: 2.5, clicks: 1, sessions: 1, form_starts: 1, leads: 0, cpl: null, epc: 0.0, ctr_to_lead: 0.0}
+        - {report_date: "2026-10-11", partner_id: meta_ads, spend: 1.0, clicks: 0, sessions: 0, form_starts: 0, leads: 0, cpl: null, epc: null, ctr_to_lead: null}
+        - {report_date: "2026-10-12", partner_id: google_ads, spend: 3.0, clicks: 1, sessions: 1, form_starts: 1, leads: 1, cpl: 3.0, epc: 50.0, ctr_to_lead: 1.0}
+
+  - name: test_kpi_totals_recompute_rates_from_sums
+    description: >
+      Two partner rows on the same day roll up to one row. CPL is total spend / total leads (110 / 11 = 10),
+      not the average of the per-row CPLs (which would be 50.5).
+    model: mart_kpi_daily_totals
+    given:
+      - input: ref('mart_performance_funnel_daily')
+        rows:
+          - {report_date: "2026-10-10", partner_id: google_ads, spend: 100.0, clicks: 50, sessions: 50, form_starts: 30, leads: 1, accepted_leads: 1, revenue: 60.0, partner_payout: 10.0}
+          - {report_date: "2026-10-10", partner_id: meta_ads, spend: 10.0, clicks: 50, sessions: 50, form_starts: 30, leads: 10, accepted_leads: 5, revenue: 300.0, partner_payout: 90.0}
+    expect:
+      rows:
+        - {report_date: "2026-10-10", spend: 110.0, clicks: 100, leads: 11, accepted_leads: 6, revenue: 360.0, margin: 250.0, cpl: 10.0, epc: 3.6, lead_rate: 0.11, acceptance_rate: 0.5455}
+
+  - name: test_ab_readout_known_values_are_significant
+    description: >
+      Control 200/1000 vs treatment 250/1000 submits: pooled p = 0.225, SE = 0.018675, z = 2.6774 (significant).
+      Form starts 300/1000 vs 400/1000: z = 4.6881.
+    model: mart_ab_test_readout
+    given:
+      - input: ref('stg_funnel_events')
+        format: sql
+        rows: |
+          select
+            concat(v, '_', step, '_', cast(i as string)) as event_id,
+            concat(v, '_sess_', cast(i as string)) as session_id,
+            concat(v, '_trf_', cast(i as string)) as traffic_id,
+            'usr_1' as user_pseudo_id,
+            step as step_name,
+            case step when 'landing_view' then 1 when 'form_start' then 2 else 3 end as step_number,
+            v as variant_id,
+            timestamp('2026-10-10') as event_ts,
+            date('2026-10-10') as event_date,
+            timestamp('2026-10-10') as _ingested_at,
+            'b1' as _batch_id
+          from unnest(['control', 'treatment_v2']) as v,
+            unnest(generate_array(1, 1000)) as i,
+            unnest(['landing_view', 'form_start', 'form_submit']) as step
+          where step = 'landing_view'
+            or (step = 'form_start' and i <= if(v = 'control', 300, 400))
+            or (step = 'form_submit' and i <= if(v = 'control', 200, 250))
+    expect:
+      rows:
+        - {metric_name: landing_to_form_start, n_c: 1000, x_c: 300, n_t: 1000, x_t: 400, p_c: 0.3, p_t: 0.4, abs_lift: 0.1, rel_lift: 0.333333, pooled_p: 0.35, std_error: 0.021331, z_score: 4.6881, is_statistically_significant: true}
+        - {metric_name: landing_to_submit, n_c: 1000, x_c: 200, n_t: 1000, x_t: 250, p_c: 0.2, p_t: 0.25, abs_lift: 0.05, rel_lift: 0.25, pooled_p: 0.225, std_error: 0.018675, z_score: 2.6774, is_statistically_significant: true}
+
+  - name: test_ab_readout_zero_conversions_has_null_z_and_is_not_significant
+    description: No conversions in either variant => SE = 0 => z_score is NULL (no divide-by-zero) and the flag is false.
+    model: mart_ab_test_readout
+    given:
+      - input: ref('stg_funnel_events')
+        rows:
+          - {event_id: e1, session_id: sess_c, step_name: landing_view, variant_id: control}
+          - {event_id: e2, session_id: sess_t, step_name: landing_view, variant_id: treatment_v2}
+    expect:
+      rows:
+        - {metric_name: landing_to_form_start, n_c: 1, x_c: 0, n_t: 1, x_t: 0, pooled_p: 0.0, std_error: 0.0, z_score: null, is_statistically_significant: false}
+        - {metric_name: landing_to_submit, n_c: 1, x_c: 0, n_t: 1, x_t: 0, pooled_p: 0.0, std_error: 0.0, z_score: null, is_statistically_significant: false}

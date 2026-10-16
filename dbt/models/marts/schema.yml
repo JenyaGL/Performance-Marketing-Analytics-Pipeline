@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: mart_performance_funnel_daily
+    description: >
+      Daily funnel economics per click date x partner x campaign x traffic source.
+      Rates use NULLIF so a zero denominator yields NULL instead of an error.
+    columns:
+      - name: report_date
+        tests: [not_null]
+      - name: partner_id
+        tests: [not_null]
+      - name: campaign_id
+        tests: [not_null]
+      - name: traffic_source
+        tests: [not_null]
+      - name: spend
+        tests: [not_null]
+      - name: clicks
+        tests: [not_null]
+      - name: leads
+        tests: [not_null]
+
+  - name: mart_kpi_daily_totals
+    description: >
+      One row per day of KPI totals, partitioned by report_date so date filters scan only the days requested.
+      To roll up a date range, SUM the additive columns (spend, clicks, leads, revenue, ...) and recompute
+      the rates from those sums. Do NOT average cpl / epc / lead_rate / acceptance_rate across days.
+    columns:
+      - name: report_date
+        tests: [unique, not_null]
+      - name: spend
+        tests: [not_null]
+      - name: clicks
+        tests: [not_null]
+      - name: leads
+        tests: [not_null]
+
+  - name: mart_ab_test_readout
+    description: >
+      Two-proportion z-test of treatment vs control per funnel metric. is_statistically_significant
+      compares |z| to var ab_z_critical (1.96 = two-sided alpha 0.05) and is false when z is undefined.
+    columns:
+      - name: metric_name
+        tests:
+          - unique
+          - not_null
+          - accepted_values:
+              values: [landing_to_form_start, landing_to_submit]
+      - name: is_statistically_significant
+        tests: [not_null]
