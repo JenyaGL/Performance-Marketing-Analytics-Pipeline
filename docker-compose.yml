@@ -1,0 +1,20 @@
+services:
+  airflow:
+    build: .
+    image: performance-pipeline-airflow:local
+    command: standalone
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/keys/sa.json
+      DBT_PROFILES_DIR: /opt/airflow/dbt
+      PYTHONPATH: /opt/airflow/dags
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+      - ./dbt:/opt/airflow/dbt
+      - ./tests:/opt/airflow/tests
+      - ${GCP_KEYFILE_HOST_PATH:-./keys/sa.json}:/opt/airflow/keys/sa.json:ro
