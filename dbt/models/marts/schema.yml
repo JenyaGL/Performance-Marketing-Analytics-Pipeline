@@ -35,17 +35,3 @@ models:
         tests: [not_null]
       - name: leads
         tests: [not_null]
-
-  - name: mart_ab_test_readout
-    description: >
-      Two-proportion z-test of treatment vs control per funnel metric. is_statistically_significant
-      compares |z| to var ab_z_critical (1.96 = two-sided alpha 0.05) and is false when z is undefined.
-    columns:
-      - name: metric_name
-        tests:
-          - unique
-          - not_null
-          - accepted_values:
-              values: [landing_to_form_start, landing_to_submit]
-      - name: is_statistically_significant
-        tests: [not_null]
