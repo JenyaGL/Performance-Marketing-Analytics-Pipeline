@@ -11,3 +11,4 @@ __pycache__/
 *.json
 .claude/
 dbt/.user.yml
+standalone_admin_password.txt
