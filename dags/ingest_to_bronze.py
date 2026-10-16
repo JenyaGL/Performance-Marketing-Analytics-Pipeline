@@ -18,6 +18,7 @@ from airflow.exceptions import AirflowSkipException
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import get_current_context
 
+from alerts.notify import dag_failure_callback, make_slow_task_callback, task_failure_callback
 from bronze.loader import (
     BRONZE_DATASET,
     ENTITIES,
@@ -33,6 +34,17 @@ BQ_LOCATION = os.environ.get("BQ_LOCATION", "US")
 DATA_DIR = "/opt/airflow/data"
 LANDING_ROOT = f"{DATA_DIR}/landing"
 DBT_DIR = "/opt/airflow/dbt"
+
+# Stuck = exceeds the hard execution_timeout -> task fails -> CRITICAL alert.
+# Slow  = succeeds but exceeds the soft limit (about 3x a normal run) -> WARNING alert.
+SOFT_LIMITS_SECONDS = {
+    "ensure_bronze": 60,
+    "generate_files": 60,
+    "load_traffic": 180,
+    "load_events": 180,
+    "load_conversions": 180,
+    "dbt_build": 360,
+}
 
 
 def _bq_client():
@@ -57,7 +69,8 @@ def _batch_exists(client, table_id: str, batch_id: str) -> bool:
     rows = client.query(
         f"SELECT COUNT(1) AS n FROM `{table_id}` WHERE _batch_id = @batch_id",
         job_config=bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("batch_id", "STRING", batch_id)]
+            query_parameters=[bigquery.ScalarQueryParameter("batch_id", "STRING", batch_id)],
+            maximum_bytes_billed=1_000_000_000,  # cost guardrail: refuse to scan more than 1 GB
         ),
     ).result()
     return next(iter(rows)).n > 0
@@ -91,13 +104,21 @@ def _landing_dir() -> str:
     start_date=datetime(2026, 10, 1),
     catchup=False,
     max_active_runs=1,
-    default_args={"retries": 1, "retry_delay": timedelta(minutes=2)},
+    dagrun_timeout=timedelta(hours=1),
+    on_failure_callback=dag_failure_callback,
+    default_args={
+        "retries": 1,
+        "retry_delay": timedelta(minutes=2),
+        "execution_timeout": timedelta(minutes=10),
+        "on_failure_callback": task_failure_callback,
+        "on_success_callback": make_slow_task_callback(SOFT_LIMITS_SECONDS),
+    },
     # Trigger with config {"faults": "malformed_lines"} (comma-separated) to rehearse a broken pull.
     params={"faults": ""},
     tags=["bronze", "performance"],
 )
 def ingest_to_bronze():
-    @task
+    @task(execution_timeout=timedelta(minutes=5))
     def ensure_bronze():
         from google.cloud import bigquery
 
@@ -127,6 +148,7 @@ def ingest_to_bronze():
 
     generate_files = BashOperator(
         task_id="generate_files",
+        execution_timeout=timedelta(minutes=5),
         # RESTATE_FROM = the most recent earlier landing dir, whose leads may come back as returns.
         bash_command=(
             f"PREV=$(ls -1d {LANDING_ROOT}/*/ 2>/dev/null"
@@ -175,6 +197,7 @@ def ingest_to_bronze():
             f"/opt/dbt-venv/bin/dbt test --select test_type:unit {dbt_args}"
         ),
         trigger_rule="none_failed",
+        execution_timeout=timedelta(minutes=20),
     )
 
     loads = [

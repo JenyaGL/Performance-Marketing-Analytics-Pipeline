@@ -10,3 +10,4 @@ performance_pipeline:
       location: "{{ env_var('BQ_LOCATION', 'US') }}"
       threads: 4
       job_execution_timeout_seconds: 300
+      maximum_bytes_billed: 1000000000  # refuse any single query scanning > 1 GB (cost guardrail)
