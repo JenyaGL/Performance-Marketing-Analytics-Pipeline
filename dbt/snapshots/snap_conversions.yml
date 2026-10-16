@@ -1,0 +1,11 @@
+snapshots:
+  - name: snap_conversions
+    description: >
+      SCD Type 2 history of every lead. When a buyer returns a lead (status change), the old version is
+      closed (dbt_valid_to set) and a new current version is added (dbt_valid_to is NULL).
+    relation: ref('stg_conversions')
+    config:
+      schema: silver
+      unique_key: conversion_id
+      strategy: timestamp
+      updated_at: status_updated_at

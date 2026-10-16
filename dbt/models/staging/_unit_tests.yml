@@ -48,3 +48,23 @@ unit_tests:
         - {conversion_id: cnv_new, conversion_date: "2026-10-11", conversion_lag_seconds: 5, is_late_arriving: false}
         - {conversion_id: cnv_late, conversion_date: "2026-10-13", conversion_lag_seconds: 129600, is_late_arriving: true}
         - {conversion_id: cnv_orphan, conversion_date: "2026-10-11", conversion_lag_seconds: null, is_late_arriving: false}
+
+  - name: test_stg_conversions_lead_return_overwrites_status
+    description: >
+      SCD Type 1 in silver: a buyer return arrives in a later batch with the same conversion_id. The returned
+      version wins, keeps the original conversion timestamp, and is not mistaken for a late arrival.
+    model: stg_conversions
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: source('bronze', 'raw_conversions')
+        rows:
+          - {conversion_id: cnv_1, session_id: sess_1, lead_status: accepted, buyer_id: buyer_A, revenue_usd: 60.0, partner_payout_usd: 8.0, timestamp: "2026-10-10T12:00:05.000000Z", _ingested_at: "2026-10-10 13:00:00", _batch_id: b1}
+          - {conversion_id: cnv_1, session_id: sess_1, lead_status: rejected, buyer_id: buyer_A, revenue_usd: 0.0, partner_payout_usd: 8.0, timestamp: "2026-10-10T12:00:05.000000Z", status_updated_at: "2026-10-13T09:00:00.000000Z", _ingested_at: "2026-10-13 10:00:00", _batch_id: b2}
+      - input: ref('stg_funnel_events')
+        rows:
+          - {event_id: e1, session_id: sess_1, step_name: form_submit, event_ts: "2026-10-10 12:00:00"}
+    expect:
+      rows:
+        - {conversion_id: cnv_1, lead_status: rejected, revenue_usd: 0.0, conversion_date: "2026-10-10", status_updated_at: "2026-10-13 09:00:00", conversion_lag_seconds: 5, is_late_arriving: false, _batch_id: b2}

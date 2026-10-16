@@ -89,3 +89,6 @@ models:
         description: Seconds from the session's form_submit to the conversion. NULL when the session has no form_submit event.
       - name: is_late_arriving
         tests: [not_null]
+      - name: status_updated_at
+        description: When the lead's status last changed (buyer return time), or the conversion time if it never changed.
+        tests: [not_null]

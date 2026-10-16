@@ -6,6 +6,7 @@ profile: performance_pipeline
 model-paths: ["models"]
 macro-paths: ["macros"]
 test-paths: ["tests"]
+snapshot-paths: ["snapshots"]
 target-path: target
 clean-targets: [target, dbt_packages]
 

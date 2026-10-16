@@ -22,6 +22,11 @@ parsed as (
         revenue_usd,
         partner_payout_usd,
         safe.parse_timestamp('%Y-%m-%dT%H:%M:%E*SZ', `timestamp`) as conversion_ts,
+        -- When the lead's status last changed: set on buyer returns, otherwise the conversion time.
+        coalesce(
+            safe.parse_timestamp('%Y-%m-%dT%H:%M:%E*SZ', status_updated_at),
+            safe.parse_timestamp('%Y-%m-%dT%H:%M:%E*SZ', `timestamp`)
+        ) as status_updated_at,
         _ingested_at,
         _batch_id
     from src
@@ -30,7 +35,10 @@ parsed as (
 deduped as (
     select *
     from parsed
-    qualify row_number() over (partition by conversion_id order by _ingested_at desc, _batch_id desc) = 1
+    -- SCD Type 1: the latest version of each lead wins (a return overwrites the original status).
+    qualify row_number() over (
+        partition by conversion_id order by _ingested_at desc, status_updated_at desc, _batch_id desc
+    ) = 1
 ),
 
 -- One row per session, so the join below cannot fan out.
@@ -62,6 +70,7 @@ select
     conversion_lag_seconds,
     -- Late = the buyer's conversion record lagged the form submit by more than the threshold.
     coalesce(conversion_lag_seconds > {{ var('late_arrival_threshold_minutes') }} * 60, false) as is_late_arriving,
+    status_updated_at,
     _ingested_at,
     _batch_id
 from with_lag

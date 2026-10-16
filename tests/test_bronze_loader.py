@@ -57,7 +57,7 @@ def test_schemas_cover_every_generated_field(generated_dir):
         with open(generated_dir / entity.filename) as f:
             for line in f:
                 fields |= json.loads(line).keys()
-        assert fields == {name for name, _ in RAW_FIELDS[entity.name]}, entity.name
+        assert fields <= {name for name, _ in RAW_FIELDS[entity.name]}, entity.name
 
 
 def test_batch_id_is_deterministic_and_content_based(tmp_path):
@@ -165,3 +165,29 @@ def test_malformed_lines_reasons(tmp_path):
 def test_unknown_fault_is_refused(tmp_path):
     result = run_generator(tmp_path, FAULTS="typo_fault")
     assert result.returncode != 0 and "Unknown FAULTS" in result.stderr
+
+
+def test_restate_from_emits_lead_returns(tmp_path, generated_dir):
+    previous = {}
+    with open(generated_dir / "conversions.ndjson") as f:
+        for line in f:
+            r = json.loads(line)
+            previous[r["conversion_id"]] = r
+    assert run_generator(tmp_path, RESTATE_FROM=str(generated_dir / "conversions.ndjson")).returncode == 0
+
+    with open(tmp_path / "conversions.ndjson") as f:
+        returns = [r for r in map(json.loads, f) if "status_updated_at" in r]
+    eligible = [r for r in previous.values() if r["lead_status"] in ("accepted", "qualified")]
+    assert len(returns) == int(len(eligible) * 0.05) > 0
+    for r in returns:
+        original = previous[r["conversion_id"]]  # same business key as an earlier lead
+        assert original["lead_status"] in ("accepted", "qualified")
+        assert (r["lead_status"], r["revenue_usd"]) == ("rejected", 0.0)
+        assert r["timestamp"] == original["timestamp"]  # a return is not a late arrival
+    good, rejects = split_file(tmp_path / "conversions.ndjson", "conversions")
+    assert rejects == []
+
+
+def test_missing_restate_file_is_ignored(tmp_path):
+    result = run_generator(tmp_path, RESTATE_FROM=str(tmp_path / "nope.ndjson"))
+    assert result.returncode == 0 and "Restated" not in result.stdout

@@ -46,6 +46,7 @@ RAW_FIELDS = {
         ("revenue_usd", "FLOAT64"),
         ("partner_payout_usd", "FLOAT64"),
         ("timestamp", "STRING"),
+        ("status_updated_at", "STRING"),  # only on restated records (lead returns)
     ],
 }
 

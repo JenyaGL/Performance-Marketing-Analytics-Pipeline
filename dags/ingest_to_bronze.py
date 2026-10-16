@@ -116,12 +116,23 @@ def ingest_to_bronze():
                     type_=bigquery.TimePartitioningType.DAY, field="_ingested_at"
                 )
                 table.clustering_fields = ["_batch_id"]
-                client.create_table(table, exists_ok=True)
+                existing = client.create_table(table, exists_ok=True)
+                # Schema evolution: add new nullable columns to tables created by an older version.
+                known = {f.name for f in existing.schema}
+                missing = [f for f in schema if f.name not in known]
+                if missing:
+                    existing.schema = list(existing.schema) + missing
+                    client.update_table(existing, ["schema"])
+                    print(f"Added {[f.name for f in missing]} to {table_name}")
 
     generate_files = BashOperator(
         task_id="generate_files",
+        # RESTATE_FROM = the most recent earlier landing dir, whose leads may come back as returns.
         bash_command=(
+            f"PREV=$(ls -1d {LANDING_ROOT}/*/ 2>/dev/null"
+            f" | awk -v cur='{LANDING_ROOT}/{{{{ ts_nodash }}}}/' '$0 < cur' | tail -1); "
             f"DATA_OUTPUT_DIR={LANDING_ROOT}/{{{{ ts_nodash }}}}/ FAULTS='{{{{ params.faults }}}}' "
+            f'RESTATE_FROM="${{PREV:+${{PREV}}conversions.ndjson}}" '
             f"python {DATA_DIR}/generate_data.py"
         ),
     )

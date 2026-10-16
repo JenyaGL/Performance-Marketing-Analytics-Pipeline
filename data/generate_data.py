@@ -12,6 +12,9 @@ OUTPUT_DIR = os.environ.get("DATA_OUTPUT_DIR", "./")  # Set to your local path o
 # Comma-separated faults to rehearse broken pulls; empty = clean output.
 FAULTS = {f.strip() for f in os.environ.get("FAULTS", "").split(",") if f.strip()}
 KNOWN_FAULTS = {"malformed_lines", "missing_key", "schema_drift", "empty_file"}
+# Path to a previous run's conversions.ndjson; a share of its leads come back as buyer returns (SCD2 demo).
+RESTATE_FROM = os.environ.get("RESTATE_FROM", "")
+RETURN_RATE = 0.05
 
 def generate_mock_pipeline_data():
     traffic_records = []
@@ -115,6 +118,32 @@ def generate_mock_pipeline_data():
     traffic_records = inject_duplicates(traffic_records, DUPLICATE_RATE)
     event_records = inject_duplicates(event_records, DUPLICATE_RATE)
     conversion_records = inject_duplicates(conversion_records, DUPLICATE_RATE)
+
+    # 3b. Lead returns: buyers re-grade earlier leads days later. Same conversion_id, new status,
+    # original conversion timestamp, and the return time in status_updated_at.
+    if RESTATE_FROM and os.path.exists(RESTATE_FROM):
+        previous = {}
+        with open(RESTATE_FROM) as f:
+            for line in f:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict) and record.get("lead_status") in ("accepted", "qualified"):
+                    previous[record["conversion_id"]] = record
+        returned_at = datetime.utcnow().isoformat() + "Z"
+        for record in random.sample(list(previous.values()), int(len(previous) * RETURN_RATE)):
+            conversion_records.append({
+                "conversion_id": record["conversion_id"],
+                "session_id": record["session_id"],
+                "lead_status": "rejected",
+                "buyer_id": record["buyer_id"],
+                "revenue_usd": 0.0,
+                "partner_payout_usd": record["partner_payout_usd"],
+                "timestamp": record["timestamp"],
+                "status_updated_at": returned_at,
+            })
+        print(f"Restated {int(len(previous) * RETURN_RATE)} earlier leads as buyer returns")
 
     # 4. Optional fault injection (FAULTS env var) to rehearse broken pulls
     unknown = FAULTS - KNOWN_FAULTS
