@@ -1,0 +1,13 @@
+.env
+keys/
+data/landing/
+*.ndjson
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+logs/
+__pycache__/
+.pytest_cache/
+*.json
+.claude/
+dbt/.user.yml
