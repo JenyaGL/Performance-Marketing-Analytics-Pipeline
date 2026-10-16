@@ -32,6 +32,20 @@ def generated_dir(tmp_path_factory):
     return out
 
 
+def run_generator(out_dir, **env):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "data" / "generate_data.py")],
+        env={**os.environ, "DATA_OUTPUT_DIR": str(out_dir), **env},
+        capture_output=True,
+        text=True,
+    )
+
+
+def split_file(path, entity_name):
+    with open(path) as f:
+        return split_records(f, entity_name, *META)
+
+
 def test_generator_writes_all_entity_files_to_output_dir(generated_dir):
     for entity in ENTITIES:
         assert (generated_dir / entity.filename).stat().st_size > 0
@@ -109,3 +123,45 @@ def test_table_schema_appends_required_metadata():
     schema = table_schema("conversions")
     assert schema[-len(METADATA_FIELDS):] == METADATA_FIELDS
     assert all(mode == "NULLABLE" for _, _, mode in schema[: -len(METADATA_FIELDS)])
+
+
+def test_clean_generator_output_has_no_rejects(generated_dir):
+    for entity in ENTITIES:
+        good, rejects = split_file(generated_dir / entity.filename, entity.name)
+        assert rejects == [] and good
+        check_batch_acceptable(len(good), len(rejects))
+
+
+@pytest.mark.parametrize(
+    "fault, entity_name, expected_rejects, reason, loads",
+    [
+        ("malformed_lines", "ad_traffic", 2, None, True),  # below the 1% threshold: quarantined, batch loads
+        ("missing_key", "funnel_events", 1, "missing primary key event_id", True),
+        ("schema_drift", "conversions", None, "unexpected field(s): device_type", False),  # every line rejected
+        ("empty_file", "conversions", 0, None, False),  # nothing to load: broken pull
+    ],
+)
+def test_fault_injection_is_caught(tmp_path, fault, entity_name, expected_rejects, reason, loads):
+    assert run_generator(tmp_path, FAULTS=fault).returncode == 0
+    good, rejects = split_file(tmp_path / f"{entity_name}.ndjson", entity_name)
+    if expected_rejects is not None:
+        assert len(rejects) == expected_rejects
+    if reason:
+        assert all(r["error"] == reason for r in rejects)
+    if loads:
+        check_batch_acceptable(len(good), len(rejects))
+    else:
+        with pytest.raises(ValueError):
+            check_batch_acceptable(len(good), len(rejects))
+
+
+def test_malformed_lines_reasons(tmp_path):
+    run_generator(tmp_path, FAULTS="malformed_lines")
+    _, rejects = split_file(tmp_path / "ad_traffic.ndjson", "ad_traffic")
+    reasons = sorted(r["error"].split(":")[0] for r in rejects)
+    assert reasons == ["invalid JSON", "wrong type"]
+
+
+def test_unknown_fault_is_refused(tmp_path):
+    result = run_generator(tmp_path, FAULTS="typo_fault")
+    assert result.returncode != 0 and "Unknown FAULTS" in result.stderr

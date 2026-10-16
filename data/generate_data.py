@@ -9,6 +9,9 @@ NUM_CAMPAIGNS = 5
 NUM_SESSIONS = 1000
 DUPLICATE_RATE = 0.05
 OUTPUT_DIR = os.environ.get("DATA_OUTPUT_DIR", "./")  # Set to your local path or Airflow staging directory
+# Comma-separated faults to rehearse broken pulls; empty = clean output.
+FAULTS = {f.strip() for f in os.environ.get("FAULTS", "").split(",") if f.strip()}
+KNOWN_FAULTS = {"malformed_lines", "missing_key", "schema_drift", "empty_file"}
 
 def generate_mock_pipeline_data():
     traffic_records = []
@@ -113,12 +116,33 @@ def generate_mock_pipeline_data():
     event_records = inject_duplicates(event_records, DUPLICATE_RATE)
     conversion_records = inject_duplicates(conversion_records, DUPLICATE_RATE)
 
-    # 4. Write to NDJSON Files
+    # 4. Optional fault injection (FAULTS env var) to rehearse broken pulls
+    unknown = FAULTS - KNOWN_FAULTS
+    if unknown:
+        raise SystemExit(f"Unknown FAULTS: {', '.join(sorted(unknown))}. Known: {', '.join(sorted(KNOWN_FAULTS))}")
+    if "malformed_lines" in FAULTS:
+        # A truncated line (cut-off API response) and a wrong-typed value: a small reject rate, batch still loads.
+        traffic_records = traffic_records + [
+            json.dumps(traffic_records[0])[:-15],
+            {**traffic_records[1], "traffic_id": f"trf_{uuid.uuid4().hex[:8]}", "clicks": "abc"},
+        ]
+    if "missing_key" in FAULTS:
+        broken = dict(event_records[0])
+        broken.pop("event_id")
+        event_records = event_records + [broken]
+    if "schema_drift" in FAULTS:
+        # Upstream added a field without notice: every line is rejected, so the load fails.
+        conversion_records = [{**r, "device_type": "mobile"} for r in conversion_records]
+    if "empty_file" in FAULTS:
+        # The pull "succeeded" but returned nothing: the load must fail, not silently load 0 rows.
+        conversion_records = []
+
+    # 5. Write to NDJSON Files (raw strings are written as-is, to simulate malformed lines)
     def write_ndjson(filename, data):
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         with open(os.path.join(OUTPUT_DIR, f"{filename}.ndjson"), "w") as f:
             for record in data:
-                f.write(json.dumps(record) + "\n")
+                f.write((record if isinstance(record, str) else json.dumps(record)) + "\n")
         print(f"Generated {len(data)} records for {filename}.ndjson")
 
     write_ndjson("ad_traffic", traffic_records)

@@ -92,6 +92,8 @@ def _landing_dir() -> str:
     catchup=False,
     max_active_runs=1,
     default_args={"retries": 1, "retry_delay": timedelta(minutes=2)},
+    # Trigger with config {"faults": "malformed_lines"} (comma-separated) to rehearse a broken pull.
+    params={"faults": ""},
     tags=["bronze", "performance"],
 )
 def ingest_to_bronze():
@@ -118,7 +120,10 @@ def ingest_to_bronze():
 
     generate_files = BashOperator(
         task_id="generate_files",
-        bash_command=f"DATA_OUTPUT_DIR={LANDING_ROOT}/{{{{ ts_nodash }}}}/ python {DATA_DIR}/generate_data.py",
+        bash_command=(
+            f"DATA_OUTPUT_DIR={LANDING_ROOT}/{{{{ ts_nodash }}}}/ FAULTS='{{{{ params.faults }}}}' "
+            f"python {DATA_DIR}/generate_data.py"
+        ),
     )
 
     @task
