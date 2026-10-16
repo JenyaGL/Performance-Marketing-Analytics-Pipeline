@@ -14,8 +14,8 @@ KPI_MAX_CHANGE = 0.5  # CPL / EPC moved more than 50% vs the trailing average
 KPI_MIN_LEADS = 20  # too few leads makes CPL noisy
 KPI_MIN_HISTORY = 3
 USD_PER_TIB = 6.25  # BigQuery on-demand price; ignores the free tier, so the estimate is conservative
-COST_WARN_USD = 0.50
-COST_CRITICAL_USD = 1.00
+COST_WARN_USD = 1.50  # half the limit
+COST_CRITICAL_USD = 3.00
 
 CRITICAL = "CRITICAL"
 WARNING = "WARNING"

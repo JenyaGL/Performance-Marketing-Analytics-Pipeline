@@ -96,7 +96,7 @@ def test_kpi_spike_is_flagged_and_noise_is_not():
 
 @pytest.mark.parametrize(
     "usd, severity",
-    [(0.40, None), (0.60, WARNING), (1.20, CRITICAL)],
+    [(1.20, None), (1.80, WARNING), (3.50, CRITICAL)],
 )
 def test_cost_thresholds(usd, severity):
     findings = check_cost(int(usd / checks.USD_PER_TIB * TIB))

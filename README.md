@@ -254,14 +254,14 @@ The monitor runs every 6 hours, **separately from ingestion**, so it notices whe
 | **Quarantined lines** | Rows in `raw_*_rejects` in the last 24h, with example errors | WARNING |
 | **Volume anomaly** | Latest batch under 50% or over 200% of the last 7 batches' average | WARNING |
 | **KPI anomaly** | Yesterday's CPL or EPC is more than 50% off the 7-day average (only checked with 20+ leads, to avoid noise) | WARNING |
-| **BigQuery cost** | Month-to-date query cost from `INFORMATION_SCHEMA.JOBS_BY_PROJECT` × $6.25/TiB. It covers **every** query in the project, console ones included. | WARNING ≥ $0.50, CRITICAL ≥ $1.00 |
+| **BigQuery cost** | Month-to-date query cost from `INFORMATION_SCHEMA.JOBS_BY_PROJECT` × $6.25/TiB. It covers **every** query in the project, console ones included. | WARNING ≥ $1.50, CRITICAL ≥ $3.00 |
 | **Monitor health** | A check that can't run (for example, a missing permission) is reported, never silently skipped | CRITICAL |
 
 **Design choices:**
 - **One email per monitor run**, listing every finding with critical ones first. That avoids a flood of separate emails.
 - **Throttling:** a finding already emailed in the last 12h isn't repeated (`should_send`). Failure alerts from Layer 1 are never throttled.
 - **Alerting can't break the pipeline.** If SMTP is down or not configured, the alert is logged instead and the task still succeeds.
-- **All checks are pure Python functions** over query results, unit-tested with synthetic inputs (stale, behind, spikes, costs of $0.40 / $0.60 / $1.20).
+- **All checks are pure Python functions** over query results, unit-tested with synthetic inputs (stale, behind, spikes, costs of $1.20 / $1.80 / $3.50).
 - **The cost estimate is deliberately conservative:** it ignores the 1 TiB/month free tier, so it warns before real money is charged.
 
 ### Cost guardrails: prevention, not just alerts
@@ -269,7 +269,7 @@ The monitor runs every 6 hours, **separately from ingestion**, so it notices whe
 |---|---|
 | `maximum_bytes_billed: 1 GB` in `dbt/profiles.yml` | BigQuery **refuses** any single dbt query that would scan more than 1 GB. A runaway query fails instead of billing. |
 | `maximum_bytes_billed` on every Airflow query | Same cap for the guard and monitor queries |
-| GCP budget of $1/month (console) | Google's own billing alert at 50%, 90% and 100%, covering all GCP services |
+| GCP budget of $3/month (console) | Google's own billing alert at 50%, 90% and 100%, covering all GCP services |
 
 ### What it can't catch, and the production fix
 If **Airflow itself is down**, nothing inside it can send an alert. In production you'd close that gap with an external **dead-man's switch** (for example healthchecks.io, or a Cloud Monitoring uptime check): the DAG pings it after each successful run, and it alerts when the pings stop. It isn't enabled here because the Docker stack is deliberately stopped between demos, which would set it off constantly.
@@ -278,13 +278,14 @@ If **Airflow itself is down**, nothing inside it can send an alert. In productio
 1. Grant the service account **BigQuery Resource Viewer**. It's read-only and needed to read job history for the cost check.
 2. Create a Gmail **app password** (https://myaccount.google.com/apppasswords; needs 2-Step Verification).
 3. Add `SMTP_USER`, `SMTP_PASSWORD` (16 letters, no spaces) and `ALERT_EMAIL_TO` to `.env`.
-4. *(recommended)* In Billing → Budgets & alerts, create a **$1** budget with thresholds at 50%, 90% and 100%.
+4. *(recommended)* In Billing → Budgets & alerts, create a **$3** budget with thresholds at 50%, 90% and 100%.
 
 ### Verified live (real emails sent)
 | Scenario | Email received |
 |---|---|
 | Monitor after a `malformed_lines` run | `[WARNING]` … *raw_traffic_rejects: 2 line(s) quarantined in the last 24h. Examples: invalid JSON…; wrong type: clicks='abc'* |
 | Monitor run again straight away | *none*: "2 finding(s) already reported in the last 12h; not emailing again" |
+| Cost check (needs BigQuery Resource Viewer) | *none*: month-to-date ≈ **$0.03** (4.96 GB billed, 883 jobs), well under the $1.50 warning |
 | `schema_drift` ingest run | `[CRITICAL] perf-pipeline: task failed: ingest_to_bronze.load_conversions`, then `[CRITICAL] perf-pipeline: DAG run failed: ingest_to_bronze` |
 | Monitor after that failed run | `[CRITICAL] perf-pipeline: monitor found 2 critical, 0 warning`: *silver.stg_ad_traffic is behind bronze.raw_traffic … dbt_build did not run or failed* (and the same for events) |
 
